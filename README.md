@@ -170,16 +170,24 @@ message names the COBOL field.
 
 ## Supported COBOL syntax
 
-| Supported | Not supported (the script stops with an error) |
-| --- | --- |
-| Levels 01–49; nested groups are flattened into their fields | `OCCURS` |
-| `PIC` / `PICTURE [IS]`, with repeat counts like `X(150)` | `REDEFINES`, and 66-level `RENAMES` |
-| `USAGE [IS] DISPLAY` | `COMP`, `COMP-3`, `BINARY`, `PACKED-DECIMAL`, and other non-display usages |
-| `SIGN [IS] LEADING` / `TRAILING` | `SIGN ... SEPARATE` |
-| `VALUE` clauses (ignored) | Any other clause, such as `JUSTIFIED` or `SYNCHRONIZED` |
-| 88-level condition names (skipped) | |
-| `*` comment lines and `*>` inline comments | |
-| Tabs, and hyphens or underscores in names | |
+Supported:
+
+- Levels 01–49; nested groups are flattened into their fields
+- `PIC` / `PICTURE [IS]`, with repeat counts like `X(150)`
+- `USAGE [IS] DISPLAY`
+- `SIGN [IS] LEADING` / `TRAILING`
+- `VALUE` clauses (ignored)
+- 88-level condition names (skipped)
+- `*` comment lines and `*>` inline comments
+- Tabs, and hyphens or underscores in names
+
+Not supported (the script stops with an error):
+
+- `OCCURS`
+- `REDEFINES`, and 66-level `RENAMES`
+- `COMP`, `COMP-3`, `BINARY`, `PACKED-DECIMAL`, and other non-display usages
+- `SIGN ... SEPARATE`
+- Any other clause, such as `JUSTIFIED` or `SYNCHRONIZED`
 
 77-level items are skipped with a warning. Fixed-format sequence numbers in
 columns 1–6 are not stripped; remove them before running the script.
