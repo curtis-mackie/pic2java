@@ -76,6 +76,7 @@ class JavaField:
     kind: str  # text, int, long, biginteger, decimal, date, datetime, buffer, filler
     name: str  # Java field name
     cobol_name: str
+    cobol_text: str
     start: int
     length: int
     digits: int = 0
@@ -92,8 +93,8 @@ class JavaField:
     def java_type(self):
         return {
             "text": "String",
-            "int": "int",
-            "long": "long",
+            "int": "Integer",
+            "long": "Long",
             "biginteger": "BigInteger",
             "decimal": "BigDecimal",
             "date": "LocalDate",
@@ -296,7 +297,7 @@ def build_fields(record: Record, default_leading: bool) -> List[JavaField]:
         pic = picture(item)
         sources = [item.text]
         notes = []
-        f = JavaField("text", camel_case(item.name), item.name, pos, pic.length)
+        f = JavaField("text", camel_case(item.name), item.name, item.text, pos, pic.length)
 
         if item.name == "FILLER":
             f.kind = "filler"
@@ -319,6 +320,7 @@ def build_fields(record: Record, default_leading: bool) -> List[JavaField]:
                 f.kind = "datetime"
                 f.name = camel_case(prefix) if prefix else "dateTime"
                 f.length = 16
+                f.cobol_text += " " + following.text
                 sources.append(following.text)
                 notes.append("Combined into a single date and time (yyyyMMdd + HHmmss + hundredths).")
                 i += 1
@@ -391,6 +393,14 @@ def parse_expression(f: JavaField) -> str:
     }[f.kind]
 
 
+def parse_null(f: JavaField, prs: str) -> str:
+    if f.kind in ["text", "buffer", "date", "datetime", "filler"]:
+        return prs
+    else:
+        return f"isNullOrBlank(chars, {f.start}, {f.end}) ? null : {prs}"
+
+
+
 def check_statement(f: JavaField) -> str:
     n, q = f.name, java_string(f.name)
     signed = java_bool(f.signed)
@@ -409,6 +419,18 @@ def check_statement(f: JavaField) -> str:
         return f"this.{n} = checkNumber({q}, {n}, {f.digits}, {signed});"
     return f"this.{n} = checkDecimal({q}, {n}, {f.digits}, {f.scale}, {signed});"
 
+
+def check_null(f: JavaField, ck: str) -> str:
+    n = f.name
+    if f.kind in ["text", "buffer", "date", "datetime", "filler"]:
+        return ck
+    else:
+        return (f"if ({n} == null) {{\n"
+                f"    this.{n} = null;\n"
+                "}\n"
+                "else {\n"
+                f"    {ck}\n"
+                "}");
 
 def format_statement(f: JavaField) -> str:
     n = f.name
@@ -429,6 +451,18 @@ def format_statement(f: JavaField) -> str:
         return f"putZoned(out, {n}, {f.digits}, {leading});"
     return f"putZoned(out, {n}.unscaledValue(), {f.digits}, {leading});"
 
+def format_null(f: JavaField, fmt: str) -> str:
+    n = f.name
+    if f.kind in ["text", "buffer", "date", "datetime", "filler"]:
+        return fmt
+    else:
+        return (f"if (this.{n} == null) {{\n"
+                f"    putText(out, \"\", {f.length});\n"
+                "}\n"
+                "else {\n"
+                f"    {fmt}\n"
+                "}\n")
+
 
 def builder_default(f: JavaField) -> str:
     return {
@@ -440,6 +474,29 @@ def builder_default(f: JavaField) -> str:
 
 
 HELPERS = {
+    "always": """
+    /** Checks if a string is null or a char subsequence is all-spaces */
+    private static boolean isNullOrBlank(CharSequence chars, int start, int end) {
+        if (chars == null) {
+            return true;
+        }
+        else for (int i = start; i < end; i++) {
+            if (chars.charAt(i) != ' ') { return false; }
+        }
+        return true;
+    }
+
+    /** Pads a character sequence to the desired length with spaces */
+    private static CharSequence padToLength(String name, CharSequence value, int length) {
+        Objects.requireNonNull(value, name);
+        if (value.length() > length) {
+            throw new IllegalArgumentException(name + " is longer than " + length + " characters");
+        }
+        StringBuilder padded = new StringBuilder(length).append(value);
+        padded.append(" ".repeat(length - padded.length()));
+        return padded;
+    }
+""",
     "text": """
     private static String text(CharSequence chars, int start, int end) {
         int last = end;
@@ -463,8 +520,8 @@ HELPERS = {
 
     private static void putText(StringBuilder out, String value, int length) {
         out.append(value);
-        for (int i = value.length(); i < length; i++) {
-            out.append(' ');
+        if (value.length() < length) {
+            out.append(" ".repeat(value.length() - length));
         }
     }
 """,
@@ -631,9 +688,7 @@ HELPERS = {
             throw new IllegalArgumentException(name + " is longer than " + length + " characters");
         }
         StringBuilder padded = new StringBuilder(length).append(value);
-        while (padded.length() < length) {
-            padded.append(' ');
-        }
+        padded.append(" ".repeat(length - padded.length()));
         return CharBuffer.wrap(padded.toString());
     }
 """,
@@ -645,13 +700,13 @@ def indent(text: str, spaces: int) -> str:
     return "\n".join(pad + line if line else line for line in text.split("\n"))
 
 
-def generate_class(record: Record, fields: List[JavaField], package: Optional[str]) -> str:
+def generate_class(record: Record, fields: List[JavaField], debug: bool, package: Optional[str]) -> str:
     cls = camel_case(record.name, capitalize=True)
     data = [f for f in fields if f.kind != "filler"]
     kinds = {f.kind for f in fields}
     total = sum(f.length for f in fields)
 
-    helpers = []
+    helpers = ["always"]
     if "text" in kinds:
         helpers.append("text")
     if kinds & {"int", "long", "biginteger", "decimal"}:
@@ -722,7 +777,9 @@ def generate_class(record: Record, fields: List[JavaField], package: Optional[st
     w(f'                    "{cls} must be " + LENGTH + " characters, but was " + chars.length());')
     w("        }")
     for f in data:
-        w(f"        this.{f.name} = {parse_expression(f)};")
+        w(f"        this.{f.name} = {parse_null(f, parse_expression(f))};")
+        if debug:
+            w(indent(f"System.err.println(\"parse: {f.name:20} ({f.cobol_text:50}) < (\" + chars.subSequence({f.start}, {f.end}) + \")\");", 8))
     w("    }")
     w("")
 
@@ -735,13 +792,15 @@ def generate_class(record: Record, fields: List[JavaField], package: Optional[st
     w("     */")
     w(f"    protected {cls}(\n{params}) {{")
     for f in data:
-        w(indent(check_statement(f), 8))
+        w(indent(check_null(f, check_statement(f)), 8))
+        if debug:
+            w(indent(f"System.err.println(\"check: {f.name:20} ({f.cobol_text:50})\");", 8))
     w("    }")
     w("")
 
     w("    /** Parses the text form of this record. */")
     w(f"    public static {cls} fromChars(CharSequence chars) {{")
-    w(f"        return new {cls}(chars);")
+    w(f"        return new {cls}(padToLength(\"chars\", chars, LENGTH));")
     w("    }")
     w("")
     w("    public static Builder builder() {")
@@ -785,7 +844,7 @@ def generate_class(record: Record, fields: List[JavaField], package: Optional[st
     w("    public String toString() {")
     w("        StringBuilder out = new StringBuilder(LENGTH);")
     for f in fields:
-        w(f"        {format_statement(f)}")
+        w(indent(format_null(f, format_statement(f)), 8))
     w("        return out.toString();")
     w("    }")
 
@@ -828,6 +887,8 @@ def main(argv=None) -> int:
     parser.add_argument("-o", "--output-dir", default=".",
                         help="directory to write the .java files to (default: current directory)")
     parser.add_argument("-p", "--package", help="Java package for the generated classes")
+    parser.add_argument("-d", "--debug", action="store_true",
+                        help="add debug output (via System.err) in Java file")
     parser.add_argument("--sign-position", choices=("trailing", "leading"), default="trailing",
                         help="which digit carries the sign when writing negative numbers to "
                              "signed (S9) fields without a SIGN clause (default: trailing, "
@@ -836,6 +897,8 @@ def main(argv=None) -> int:
 
     if args.package and not re.fullmatch(r"[A-Za-z_]\w+(\.[A-Za-z_]\w+)*", args.package):
         parser.error(f"invalid package name {args.package!r}")
+
+    debug = bool(args.debug)
 
     try:
         records: List[Record] = []
@@ -861,7 +924,7 @@ def main(argv=None) -> int:
         outputs = []
         for cls, record in unique.items():
             fields = build_fields(record, args.sign_position == "leading")
-            outputs.append((cls, fields, generate_class(record, fields, args.package)))
+            outputs.append((cls, fields, generate_class(record, fields, debug, args.package)))
     except PicError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
