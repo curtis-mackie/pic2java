@@ -18,11 +18,11 @@ format them back into the same fixed-width text.
 ```
 
 ```java
-CaseDetail detail = CaseDetail.fromChars(response);
-BigDecimal fine = detail.getCasefine(); // "00000015050" -> 150.50
-LocalDate caseDate = detail.getCasedate(); // "20240229" -> 2024-02-29
+CaseInfo info = CaseInfo.fromChars(response);
+BigDecimal fine = info.getCasefine(); // "00000015050" -> 150.50
+LocalDate caseDate = info.getCasedate(); // "20240229" -> 2024-02-29
 
-String request = CaseDetail.builder()
+String request = CaseInfo.builder()
         .casecode(1234)
         .casetype("M")
         .casefine(new BigDecimal("150.50"))
@@ -92,7 +92,7 @@ COBOL line, and the class Javadoc includes the full source layout.
 | `9` or `S9` with no `V`, 9–18 digits | `long` |
 | `9` or `S9` with no `V`, 19–255 digits | `BigInteger` |
 | `9`/`S9` with a virtual decimal point `V` (e.g. `PIC 9(9)V99`) | `BigDecimal` with that scale |
-| `PIC 9(8)` whose name ends in `DATE` | `LocalDate` (`yyyyMMdd`) |
+| `PIC 9(8)` whose name ends in `DATE` | `LocalDate` (`uuuuMMdd`) |
 | `FOODATE PIC 9(8)` immediately followed by `FOOTIME PIC 9(8)` | One `LocalDateTime` field named `foo` |
 | Edited pictures (`Z`, `,`, `.`, `CR`, ...) | `String` holding the raw characters, with a warning |
 | `FILLER` | Not exposed; written as spaces |
@@ -111,10 +111,10 @@ name, the script stops with an error.
 
 ### Dates and times
 
-- Dates use the pattern `yyyyMMdd` with strict validation, so `20230229`
+- Dates use the pattern `uuuuMMdd` with strict validation, so `20230229`
   is rejected.
 - Combined date/time fields add a `0` to the 8-digit time (`HHmmss` +
-  hundredths) and parse the result as `yyyyMMddHHmmssSSS`.
+  hundredths) and parse the result as `uuuuMMddHHmmssSSS`.
 - A date or date/time that is all zeros or all spaces reads as `null`, and
   `null` is written back as zeros.
 - `LocalDateTime` values finer than hundredths of a second are truncated.
